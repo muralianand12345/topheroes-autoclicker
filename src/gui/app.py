@@ -6,7 +6,7 @@ from typing import Optional
 from pynput import keyboard
 
 from embedded_assets import ASSETS
-from core import ScreenImageDetector, ActionSequence
+from core import Config, ScreenImageDetector, ActionSequence
 
 
 class AutoClickerApp:
@@ -23,6 +23,9 @@ class AutoClickerApp:
         self.root.minsize(400, 450)
         self.root.resizable(True, True)
 
+        # Config
+        self.config = Config()
+
         # State
         self.is_running = False
         self.stop_event = threading.Event()
@@ -34,6 +37,7 @@ class AutoClickerApp:
         # Setup
         self._setup_ui()
         self._load_sequences()
+        self._load_saved_config()
         self._setup_hotkeys()
 
         # Handle window close
@@ -209,6 +213,33 @@ class AutoClickerApp:
 
         self.log(f"Loaded {len(self.sequences)} sequence(s)")
 
+    def _load_saved_config(self):
+        saved_scale = self.config.get_scale()
+        if saved_scale and self.detector:
+            self.detector.detected_scale = saved_scale
+            self.scale_label.configure(text=f"Scale: {saved_scale:.2f}x")
+            self.log(f"Loaded saved scale: {saved_scale:.2f}x")
+
+        settings = self.config.get_settings()
+        if settings:
+            if "check_interval" in settings:
+                self.check_interval_var.set(settings["check_interval"])
+            if "cooldown" in settings:
+                self.cooldown_var.set(settings["cooldown"])
+            if "step_delay" in settings:
+                self.step_delay_var.set(settings["step_delay"])
+            if "confidence" in settings:
+                self.confidence_var.set(settings["confidence"])
+
+    def _save_settings(self):
+        settings = {
+            "check_interval": self.check_interval_var.get(),
+            "cooldown": self.cooldown_var.get(),
+            "step_delay": self.step_delay_var.get(),
+            "confidence": self.confidence_var.get(),
+        }
+        self.config.set_settings(settings)
+
     def _calibrate(self):
         if not self.detector or not self.sequences:
             self.log("No sequences loaded. Cannot calibrate.")
@@ -234,8 +265,11 @@ class AutoClickerApp:
         self.calibrate_btn.configure(state=tk.NORMAL)
         self.scale_label.configure(text=f"Scale: {scale:.2f}x")
 
+        self.config.set_scale(scale)
+
         if confidence >= self.detector.confidence_threshold:
             self.log(f"Calibration successful! Scale: {scale:.2f}x (confidence: {confidence:.2f})")
+            self.log("Scale saved - no need to recalibrate next time.")
         else:
             self.log(f"Calibration done. Scale: {scale:.2f}x (low confidence: {confidence:.2f})")
             self.log("Tip: Make sure the game UI is visible on screen.")
@@ -247,6 +281,7 @@ class AutoClickerApp:
     def _reset_scale(self):
         if self.detector:
             self.detector.reset_scale()
+            self.config.clear_scale()
             self.scale_label.configure(text="Scale: 1.0x")
             self.log("Scale reset to 1.0x")
 
@@ -388,6 +423,7 @@ class AutoClickerApp:
 
     def _on_close(self):
         self.stop()
+        self._save_settings()
         self.canvas.unbind_all("<MouseWheel>")
         self.canvas.unbind_all("<Button-4>")
         self.canvas.unbind_all("<Button-5>")
