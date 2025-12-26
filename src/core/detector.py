@@ -11,6 +11,7 @@ from .models import ActionSequence, MatchResult
 class ScreenImageDetector:
     def __init__(self, confidence_threshold: float = 0.8):
         self.confidence_threshold = confidence_threshold
+        self.detected_scale: Optional[float] = None
 
     def capture_screen(self) -> np.ndarray:
         with mss.mss() as sct:
@@ -46,28 +47,87 @@ class ScreenImageDetector:
                 template_names.append(action_name)
 
             if templates:
-                sequences.append(ActionSequence(name=sequence_name,templates=templates,template_names=template_names))
+                sequences.append(ActionSequence(name=sequence_name, templates=templates, template_names=template_names))
 
         return sequences
+
+    def calibrate_scale(self, template: np.ndarray, screenshot: Optional[np.ndarray] = None) -> Tuple[float, float]:
+        if screenshot is None:
+            screenshot = self.capture_screen()
+
+        screenshot_gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+        template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+
+        scales = [1.0, 0.95, 1.05, 0.9, 1.1, 0.85, 1.15, 0.8, 1.2, 0.75, 1.25, 0.7, 1.3]
+        best_scale = 1.0
+        best_conf = 0.0
+
+        for scale in scales:
+            tw = int(template_gray.shape[1] * scale)
+            th = int(template_gray.shape[0] * scale)
+
+            if tw < 10 or th < 10:
+                continue
+            if th > screenshot_gray.shape[0] or tw > screenshot_gray.shape[1]:
+                continue
+
+            scaled = cv2.resize(template_gray, (tw, th), interpolation=cv2.INTER_AREA)
+            result = cv2.matchTemplate(screenshot_gray, scaled, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(result)
+
+            if max_val > best_conf:
+                best_conf = max_val
+                best_scale = scale
+
+        self.detected_scale = best_scale
+        return best_scale, best_conf
+
+    def calibrate_with_sequences(self, sequences: list[ActionSequence], screenshot: Optional[np.ndarray] = None) -> Tuple[float, float]:
+        if screenshot is None:
+            screenshot = self.capture_screen()
+
+        best_scale = 1.0
+        best_conf = 0.0
+
+        for sequence in sequences:
+            for template in sequence.templates:
+                scale, conf = self.calibrate_scale(template, screenshot)
+                if conf > best_conf:
+                    best_conf = conf
+                    best_scale = scale
+
+        self.detected_scale = best_scale
+        return best_scale, best_conf
+
+    def reset_scale(self):
+        self.detected_scale = None
 
     def find_image(self, template: np.ndarray, screenshot: Optional[np.ndarray] = None, use_grayscale: bool = True) -> MatchResult:
         if screenshot is None:
             screenshot = self.capture_screen()
 
         if use_grayscale:
-            screenshot_gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
-            template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-            result = cv2.matchTemplate(screenshot_gray, template_gray, cv2.TM_CCOEFF_NORMED)
+            screenshot_proc = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+            template_proc = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
         else:
-            result = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
+            screenshot_proc = screenshot
+            template_proc = template
 
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-        h, w = template.shape[:2]
+        scale = self.detected_scale or 1.0
 
-        if max_val >= self.confidence_threshold:
-            return MatchResult(found=True, x=max_loc[0], y=max_loc[1], width=w, height=h, confidence=max_val)
+        if scale != 1.0:
+            tw = int(template_proc.shape[1] * scale)
+            th = int(template_proc.shape[0] * scale)
+            template_proc = cv2.resize(template_proc, (tw, th), interpolation=cv2.INTER_AREA)
 
-        return MatchResult(found=False, confidence=max_val)
+        if template_proc.shape[0] > screenshot_proc.shape[0] or template_proc.shape[1] > screenshot_proc.shape[1]:
+            return MatchResult(found=False, confidence=0.0)
+
+        result = cv2.matchTemplate(screenshot_proc, template_proc, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        h, w = template_proc.shape[:2]
+
+        return MatchResult(found=max_val >= self.confidence_threshold, x=max_loc[0], y=max_loc[1], width=w, height=h, confidence=max_val)
 
     def click_at(self, x: int, y: int, clicks: int = 1, button: str = "left"):
         import pyautogui
@@ -118,7 +178,7 @@ class ScreenImageDetector:
 
         return True
 
-    def find_first_sequence(self,sequences: list[ActionSequence],enabled_sequences: set[str],screenshot: Optional[np.ndarray] = None) -> Optional[ActionSequence]:
+    def find_first_sequence(self, sequences: list[ActionSequence], enabled_sequences: set[str], screenshot: Optional[np.ndarray] = None) -> Optional[ActionSequence]:
         if screenshot is None:
             screenshot = self.capture_screen()
 

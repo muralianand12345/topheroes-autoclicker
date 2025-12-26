@@ -13,14 +13,14 @@ class AutoClickerApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Top Heroes Auto-Clicker")
-    
+
         screen_height = self.root.winfo_screenheight()
         screen_width = self.root.winfo_screenwidth()
-        window_height = min(600, screen_height - 100)
+        window_height = min(650, screen_height - 100)
         window_width = 500
-        
+
         self.root.geometry(f"{window_width}x{window_height}")
-        self.root.minsize(400, 400)
+        self.root.minsize(400, 450)
         self.root.resizable(True, True)
 
         # State
@@ -49,19 +49,14 @@ class AutoClickerApp:
         self.canvas_frame = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
-        # Bind canvas resize to adjust frame width
         self.canvas.bind("<Configure>", self._on_canvas_configure)
-
-        # Bind mouse wheel for scrolling
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
         self.canvas.bind_all("<Button-4>", self._on_mousewheel)
         self.canvas.bind_all("<Button-5>", self._on_mousewheel)
 
-        # Pack scrollbar and canvas
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Main frame inside scrollable frame
         main_frame = ttk.Frame(self.scrollable_frame, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -75,11 +70,29 @@ class AutoClickerApp:
         self.no_sequences_label = ttk.Label(self.sequences_container, text="No sequences loaded. Check embedded_assets.py", foreground="gray")
         self.no_sequences_label.pack(anchor=tk.W)
 
+        # === Calibration Frame ===
+        calib_frame = ttk.LabelFrame(main_frame, text="Calibration", padding="10")
+        calib_frame.pack(fill=tk.X, pady=(0, 10))
+
+        calib_info = ttk.Label(calib_frame, text="If clicks are offset, open the game and click Calibrate.", foreground="gray")
+        calib_info.pack(anchor=tk.W)
+
+        calib_btn_frame = ttk.Frame(calib_frame)
+        calib_btn_frame.pack(fill=tk.X, pady=(5, 0))
+
+        self.calibrate_btn = ttk.Button(calib_btn_frame, text="🔧 Calibrate", command=self._calibrate)
+        self.calibrate_btn.pack(side=tk.LEFT)
+
+        self.reset_scale_btn = ttk.Button(calib_btn_frame, text="Reset", command=self._reset_scale)
+        self.reset_scale_btn.pack(side=tk.LEFT, padx=(5, 0))
+
+        self.scale_label = ttk.Label(calib_btn_frame, text="Scale: 1.0x", foreground="gray")
+        self.scale_label.pack(side=tk.LEFT, padx=(10, 0))
+
         # === Settings Frame ===
         settings_frame = ttk.LabelFrame(main_frame, text="Settings", padding="10")
         settings_frame.pack(fill=tk.X, pady=(0, 10))
 
-        # Settings grid
         settings_grid = ttk.Frame(settings_frame)
         settings_grid.pack(fill=tk.X)
 
@@ -111,7 +124,6 @@ class AutoClickerApp:
         log_frame = ttk.LabelFrame(main_frame, text="Log", padding="10")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
-        # Log text with scrollbar
         log_container = ttk.Frame(log_frame)
         log_container.pack(fill=tk.BOTH, expand=True)
 
@@ -122,14 +134,12 @@ class AutoClickerApp:
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Clear log button
         ttk.Button(log_frame, text="Clear Log", command=self._clear_log).pack(anchor=tk.E, pady=(5, 0))
 
-        # === Control Frame (Fixed at bottom) ===
+        # === Control Frame ===
         control_frame = ttk.Frame(main_frame)
         control_frame.pack(fill=tk.X, pady=(10, 0))
 
-        # Buttons
         btn_frame = ttk.Frame(control_frame)
         btn_frame.pack(side=tk.LEFT)
 
@@ -139,7 +149,6 @@ class AutoClickerApp:
         self.stop_btn = ttk.Button(btn_frame, text="⬛ STOP (F7)", command=self.stop, width=15, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT)
 
-        # Status
         status_frame = ttk.Frame(control_frame)
         status_frame.pack(side=tk.RIGHT)
 
@@ -155,11 +164,11 @@ class AutoClickerApp:
         self.canvas.itemconfig(self.canvas_frame, width=event.width)
 
     def _on_mousewheel(self, event):
-        if event.num == 4:  # Linux scroll up
+        if event.num == 4:
             self.canvas.yview_scroll(-1, "units")
-        elif event.num == 5:  # Linux scroll down
+        elif event.num == 5:
             self.canvas.yview_scroll(1, "units")
-        else:  # Windows/Mac
+        else:
             self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _draw_status_indicator(self, color: str):
@@ -199,6 +208,47 @@ class AutoClickerApp:
             ttk.Label(frame, text=f"({sequence.action_count} actions)", foreground="gray").pack(side=tk.LEFT, padx=(5, 0))
 
         self.log(f"Loaded {len(self.sequences)} sequence(s)")
+
+    def _calibrate(self):
+        if not self.detector or not self.sequences:
+            self.log("No sequences loaded. Cannot calibrate.")
+            return
+
+        if self.is_running:
+            self.log("Stop the auto-clicker before calibrating.")
+            return
+
+        self.log("Calibrating... (make sure game is visible)")
+        self.calibrate_btn.configure(state=tk.DISABLED)
+
+        def do_calibrate():
+            try:
+                scale, confidence = self.detector.calibrate_with_sequences(self.sequences)
+                self.root.after(0, lambda: self._on_calibrate_complete(scale, confidence))
+            except Exception as e:
+                self.root.after(0, lambda: self._on_calibrate_error(str(e)))
+
+        threading.Thread(target=do_calibrate, daemon=True).start()
+
+    def _on_calibrate_complete(self, scale: float, confidence: float):
+        self.calibrate_btn.configure(state=tk.NORMAL)
+        self.scale_label.configure(text=f"Scale: {scale:.2f}x")
+
+        if confidence >= self.detector.confidence_threshold:
+            self.log(f"Calibration successful! Scale: {scale:.2f}x (confidence: {confidence:.2f})")
+        else:
+            self.log(f"Calibration done. Scale: {scale:.2f}x (low confidence: {confidence:.2f})")
+            self.log("Tip: Make sure the game UI is visible on screen.")
+
+    def _on_calibrate_error(self, error: str):
+        self.calibrate_btn.configure(state=tk.NORMAL)
+        self.log(f"Calibration failed: {error}")
+
+    def _reset_scale(self):
+        if self.detector:
+            self.detector.reset_scale()
+            self.scale_label.configure(text="Scale: 1.0x")
+            self.log("Scale reset to 1.0x")
 
     def _setup_hotkeys(self):
         def on_press(key):
@@ -254,14 +304,16 @@ class AutoClickerApp:
         self.is_running = True
         self.stop_event.clear()
 
-        # Update UI
         self.start_btn.configure(state=tk.DISABLED)
         self.stop_btn.configure(state=tk.NORMAL)
+        self.calibrate_btn.configure(state=tk.DISABLED)
         self._draw_status_indicator("#22c55e")
         self.status_label.configure(text="Running")
 
         self.log("Started monitoring...")
         self.log(f"Enabled: {', '.join(enabled)}")
+        if self.detector.detected_scale and self.detector.detected_scale != 1.0:
+            self.log(f"Using scale: {self.detector.detected_scale:.2f}x")
 
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
@@ -276,6 +328,7 @@ class AutoClickerApp:
 
         self.start_btn.configure(state=tk.NORMAL)
         self.stop_btn.configure(state=tk.DISABLED)
+        self.calibrate_btn.configure(state=tk.NORMAL)
         self._draw_status_indicator("gray")
         self.status_label.configure(text="Idle")
 
