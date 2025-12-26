@@ -6,8 +6,8 @@ from typing import Optional
 
 from pynput import keyboard
 
-from ..core import ScreenImageDetector, ActionSequence
-from ..embedded_assets import ASSETS
+from core import ScreenImageDetector, ActionSequence
+from embedded_assets import ASSETS
 
 
 class AutoClickerApp:

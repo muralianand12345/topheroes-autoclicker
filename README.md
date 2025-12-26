@@ -65,17 +65,12 @@ An auto-clicker for Top Heroes game that uses image detection to find and click 
 
 ## Building the .exe
 
-1. Install PyInstaller:
+Run the run script:
    ```bash
-   pip install pyinstaller
+   uv run pyinstaller --onefile --windowed --name TopHeroesAutoClicker --paths=src run.py
    ```
 
-2. Run the build script:
-   ```bash
-   python build.py
-   ```
-
-3. Find the executable at `dist/TopHeroesAutoClicker.exe`
+1. Find the executable at `dist/TopHeroesAutoClicker.exe`
 
 ## Usage
 

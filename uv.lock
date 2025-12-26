@@ -634,6 +634,11 @@ dev = [
     { name = "pyinstaller" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pyinstaller" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "mss", specifier = ">=10.0.0" },
@@ -644,3 +649,6 @@ requires-dist = [
     { name = "pynput", specifier = ">=1.7.6" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pyinstaller", specifier = ">=6.17.0" }]

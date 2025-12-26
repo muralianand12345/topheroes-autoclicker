@@ -16,7 +16,8 @@ pyautogui.FAILSAFE = True
 
 
 def main():
-    from src.gui import AutoClickerApp
+    # Use relative imports when running as script
+    from gui import AutoClickerApp
 
     app = AutoClickerApp()
     app.run()

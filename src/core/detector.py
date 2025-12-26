@@ -1,10 +1,9 @@
-import base64
-import time
-from typing import Callable, Optional, Tuple
-
 import cv2
 import mss
+import time
+import base64
 import numpy as np
+from typing import Callable, Optional, Tuple
 
 from .models import ActionSequence, MatchResult
 
@@ -14,14 +13,21 @@ class ScreenImageDetector:
 
     def __init__(self, confidence_threshold: float = 0.8):
         self.confidence_threshold = confidence_threshold
-        self.sct = mss.mss()
+        # Don't create mss here - create it per-capture for thread safety
 
     def capture_screen(self) -> np.ndarray:
-        """Capture all monitors combined."""
-        monitor_info = self.sct.monitors[0]
-        screenshot = self.sct.grab(monitor_info)
-        img = np.array(screenshot)
-        return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        """Capture all monitors combined (thread-safe)."""
+        with mss.mss() as sct:
+            monitor_info = sct.monitors[0]
+            screenshot = sct.grab(monitor_info)
+            img = np.array(screenshot)
+            return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+
+    def _get_monitor_offset(self) -> Tuple[int, int]:
+        """Get the monitor offset for click coordinates."""
+        with mss.mss() as sct:
+            mon = sct.monitors[0]
+            return (mon["left"], mon["top"])
 
     def base64_to_image(self, base64_string: str) -> np.ndarray:
         """Convert base64 string to OpenCV image."""
@@ -32,7 +38,9 @@ class ScreenImageDetector:
             raise ValueError("Failed to decode base64 image")
         return img
 
-    def load_embedded_sequences(self, assets_dict: dict[str, dict[str, str]]) -> list[ActionSequence]:
+    def load_embedded_sequences(
+        self, assets_dict: dict[str, dict[str, str]]
+    ) -> list[ActionSequence]:
         """
         Load action sequences from embedded base64 assets.
 
@@ -85,7 +93,9 @@ class ScreenImageDetector:
         if use_grayscale:
             screenshot_gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
             template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-            result = cv2.matchTemplate(screenshot_gray, template_gray, cv2.TM_CCOEFF_NORMED)
+            result = cv2.matchTemplate(
+                screenshot_gray, template_gray, cv2.TM_CCOEFF_NORMED
+            )
         else:
             result = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
 
@@ -108,9 +118,9 @@ class ScreenImageDetector:
         """Click at specified coordinates with multi-monitor support."""
         import pyautogui
 
-        mon = self.sct.monitors[0]
-        abs_x = x + mon["left"]
-        abs_y = y + mon["top"]
+        offset_x, offset_y = self._get_monitor_offset()
+        abs_x = x + offset_x
+        abs_y = y + offset_y
         pyautogui.click(abs_x, abs_y, clicks=clicks, button=button)
 
     def find_and_click(
@@ -161,7 +171,9 @@ class ScreenImageDetector:
 
         log(f"Executing: {sequence.name}")
 
-        for i, (template, name) in enumerate(zip(sequence.templates, sequence.template_names)):
+        for i, (template, name) in enumerate(
+            zip(sequence.templates, sequence.template_names)
+        ):
             start_time = time.time()
             found = False
 
@@ -173,7 +185,9 @@ class ScreenImageDetector:
 
                 match = self.find_and_click(template)
                 if match.found:
-                    log(f"  [{i+1}/{len(sequence.templates)}] Clicked '{name}' at {match.center}")
+                    log(
+                        f"  [{i+1}/{len(sequence.templates)}] Clicked '{name}' at {match.center}"
+                    )
                     found = True
                     time.sleep(step_delay)
                     break
