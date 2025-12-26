@@ -1,18 +1,15 @@
-import threading
 import time
+import threading
 import tkinter as tk
 from tkinter import ttk
 from typing import Optional
-
 from pynput import keyboard
 
-from core import ScreenImageDetector, ActionSequence
 from embedded_assets import ASSETS
+from core import ScreenImageDetector, ActionSequence
 
 
 class AutoClickerApp:
-    """Main GUI application for the auto-clicker."""
-
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Top Heroes Auto-Clicker")
@@ -36,7 +33,6 @@ class AutoClickerApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _setup_ui(self):
-        """Setup the user interface."""
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -47,12 +43,7 @@ class AutoClickerApp:
         self.sequences_container = ttk.Frame(seq_frame)
         self.sequences_container.pack(fill=tk.X)
 
-        # Placeholder label (will be replaced when sequences load)
-        self.no_sequences_label = ttk.Label(
-            self.sequences_container,
-            text="No sequences loaded. Check embedded_assets.py",
-            foreground="gray",
-        )
+        self.no_sequences_label = ttk.Label(self.sequences_container, text="No sequences loaded. Check embedded_assets.py", foreground="gray")
         self.no_sequences_label.pack(anchor=tk.W)
 
         # === Settings Frame ===
@@ -71,7 +62,7 @@ class AutoClickerApp:
 
         # Cooldown
         ttk.Label(settings_grid, text="Cooldown:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.cooldown_var = tk.StringVar(value="2.0")
+        self.cooldown_var = tk.StringVar(value="1.0")
         ttk.Entry(settings_grid, textvariable=self.cooldown_var, width=8).grid(row=1, column=1, padx=5, pady=2)
         ttk.Label(settings_grid, text="sec").grid(row=1, column=2, sticky=tk.W, pady=2)
 
@@ -132,12 +123,10 @@ class AutoClickerApp:
         self.status_label.pack(side=tk.LEFT)
 
     def _draw_status_indicator(self, color: str):
-        """Draw the status indicator circle."""
         self.status_indicator.delete("all")
         self.status_indicator.create_oval(2, 2, 10, 10, fill=color, outline=color)
 
     def _load_sequences(self):
-        """Load sequences from embedded assets."""
         if not ASSETS:
             self.log("No embedded assets found.")
             self.log("Run: python scripts/embed_assets.py")
@@ -155,10 +144,8 @@ class AutoClickerApp:
             self.log("No sequences loaded from assets.")
             return
 
-        # Remove placeholder
         self.no_sequences_label.destroy()
 
-        # Create checkboxes for each sequence
         for sequence in self.sequences:
             var = tk.BooleanVar(value=True)
             self.sequence_vars[sequence.name] = var
@@ -174,8 +161,6 @@ class AutoClickerApp:
         self.log(f"Loaded {len(self.sequences)} sequence(s)")
 
     def _setup_hotkeys(self):
-        """Setup global hotkeys using pynput."""
-
         def on_press(key):
             try:
                 if key == keyboard.Key.f6:
@@ -185,13 +170,11 @@ class AutoClickerApp:
             except Exception:
                 pass
 
-        # Start listener in daemon thread
         self.hotkey_listener = keyboard.Listener(on_press=on_press)
         self.hotkey_listener.daemon = True
         self.hotkey_listener.start()
 
     def log(self, message: str):
-        """Add a message to the log."""
         timestamp = time.strftime("%H:%M:%S")
         full_message = f"[{timestamp}] {message}\n"
 
@@ -201,17 +184,14 @@ class AutoClickerApp:
         self.log_text.configure(state=tk.DISABLED)
 
     def _clear_log(self):
-        """Clear the log text."""
         self.log_text.configure(state=tk.NORMAL)
         self.log_text.delete(1.0, tk.END)
         self.log_text.configure(state=tk.DISABLED)
 
     def _get_enabled_sequences(self) -> set[str]:
-        """Get the names of enabled sequences."""
         return {name for name, var in self.sequence_vars.items() if var.get()}
 
     def start(self):
-        """Start the auto-clicker."""
         if self.is_running:
             return
 
@@ -224,7 +204,6 @@ class AutoClickerApp:
             self.log("No sequences enabled.")
             return
 
-        # Update confidence threshold
         try:
             confidence = float(self.confidence_var.get())
             if self.detector:
@@ -244,12 +223,10 @@ class AutoClickerApp:
         self.log("Started monitoring...")
         self.log(f"Enabled: {', '.join(enabled)}")
 
-        # Start worker thread
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
 
     def stop(self):
-        """Stop the auto-clicker."""
         if not self.is_running:
             return
 
@@ -257,14 +234,12 @@ class AutoClickerApp:
         self.stop_event.set()
         self.is_running = False
 
-        # Update UI
         self.start_btn.configure(state=tk.NORMAL)
         self.stop_btn.configure(state=tk.DISABLED)
         self._draw_status_indicator("gray")
         self.status_label.configure(text="Idle")
 
     def _worker_loop(self):
-        """Main worker loop running in background thread."""
         try:
             check_interval = float(self.check_interval_var.get())
         except ValueError:
@@ -296,19 +271,12 @@ class AutoClickerApp:
                     execution_count += 1
                     self._log_from_thread(f"Found '{sequence.name}' (#{execution_count})")
 
-                    success = self.detector.execute_sequence(
-                        sequence,
-                        step_delay=step_delay,
-                        log_callback=self._log_from_thread,
-                        stop_flag=lambda: self.stop_event.is_set(),
-                    )
-
+                    success = self.detector.execute_sequence(sequence, step_delay=step_delay, log_callback=self._log_from_thread, stop_flag=lambda: self.stop_event.is_set())
                     if success:
                         self._log_from_thread("Completed!")
                     else:
                         self._log_from_thread("Incomplete")
 
-                    # Cooldown
                     for _ in range(int(cooldown * 10)):
                         if self.stop_event.is_set():
                             break
@@ -323,16 +291,13 @@ class AutoClickerApp:
         self._log_from_thread(f"Stopped. Total: {execution_count}")
 
     def _log_from_thread(self, message: str):
-        """Thread-safe logging."""
         self.root.after(0, lambda: self.log(message))
 
     def _on_close(self):
-        """Handle window close."""
         self.stop()
         if hasattr(self, "hotkey_listener"):
             self.hotkey_listener.stop()
         self.root.destroy()
 
     def run(self):
-        """Run the application."""
         self.root.mainloop()
