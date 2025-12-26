@@ -13,8 +13,15 @@ class AutoClickerApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Top Heroes Auto-Clicker")
-        self.root.geometry("500x600")
-        self.root.resizable(False, False)
+    
+        screen_height = self.root.winfo_screenheight()
+        screen_width = self.root.winfo_screenwidth()
+        window_height = min(600, screen_height - 100)
+        window_width = 500
+        
+        self.root.geometry(f"{window_width}x{window_height}")
+        self.root.minsize(400, 400)
+        self.root.resizable(True, True)
 
         # State
         self.is_running = False
@@ -33,7 +40,29 @@ class AutoClickerApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _setup_ui(self):
-        main_frame = ttk.Frame(self.root, padding="10")
+        self.canvas = tk.Canvas(self.root)
+        self.scrollbar = ttk.Scrollbar(self.root, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas)
+
+        self.scrollable_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+
+        self.canvas_frame = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        # Bind canvas resize to adjust frame width
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        # Bind mouse wheel for scrolling
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-4>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-5>", self._on_mousewheel)
+
+        # Pack scrollbar and canvas
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Main frame inside scrollable frame
+        main_frame = ttk.Frame(self.scrollable_frame, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # === Action Sequences Frame ===
@@ -86,19 +115,19 @@ class AutoClickerApp:
         log_container = ttk.Frame(log_frame)
         log_container.pack(fill=tk.BOTH, expand=True)
 
-        self.log_text = tk.Text(log_container, height=12, state=tk.DISABLED, wrap=tk.WORD)
-        scrollbar = ttk.Scrollbar(log_container, orient=tk.VERTICAL, command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=scrollbar.set)
+        self.log_text = tk.Text(log_container, height=10, state=tk.DISABLED, wrap=tk.WORD)
+        log_scrollbar = ttk.Scrollbar(log_container, orient=tk.VERTICAL, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scrollbar.set)
 
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Clear log button
         ttk.Button(log_frame, text="Clear Log", command=self._clear_log).pack(anchor=tk.E, pady=(5, 0))
 
-        # === Control Frame ===
+        # === Control Frame (Fixed at bottom) ===
         control_frame = ttk.Frame(main_frame)
-        control_frame.pack(fill=tk.X)
+        control_frame.pack(fill=tk.X, pady=(10, 0))
 
         # Buttons
         btn_frame = ttk.Frame(control_frame)
@@ -121,6 +150,17 @@ class AutoClickerApp:
 
         self.status_label = ttk.Label(status_frame, text="Idle")
         self.status_label.pack(side=tk.LEFT)
+
+    def _on_canvas_configure(self, event):
+        self.canvas.itemconfig(self.canvas_frame, width=event.width)
+
+    def _on_mousewheel(self, event):
+        if event.num == 4:  # Linux scroll up
+            self.canvas.yview_scroll(-1, "units")
+        elif event.num == 5:  # Linux scroll down
+            self.canvas.yview_scroll(1, "units")
+        else:  # Windows/Mac
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _draw_status_indicator(self, color: str):
         self.status_indicator.delete("all")
@@ -217,7 +257,7 @@ class AutoClickerApp:
         # Update UI
         self.start_btn.configure(state=tk.DISABLED)
         self.stop_btn.configure(state=tk.NORMAL)
-        self._draw_status_indicator("#22c55e")  # Green
+        self._draw_status_indicator("#22c55e")
         self.status_label.configure(text="Running")
 
         self.log("Started monitoring...")
@@ -295,6 +335,9 @@ class AutoClickerApp:
 
     def _on_close(self):
         self.stop()
+        self.canvas.unbind_all("<MouseWheel>")
+        self.canvas.unbind_all("<Button-4>")
+        self.canvas.unbind_all("<Button-5>")
         if hasattr(self, "hotkey_listener"):
             self.hotkey_listener.stop()
         self.root.destroy()
