@@ -3,27 +3,85 @@ import mss
 import time
 import base64
 import numpy as np
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, List
 
+from .window import GameWindow, WindowInfo
 from .models import ActionSequence, MatchResult
 
 
 class ScreenImageDetector:
+    MATCH_SCALES = [1.0, 0.8, 0.95, 1.05, 0.9, 1.1, 0.85, 1.15, 1.2, 0.75, 1.25, 0.7, 1.3, 0.65, 1.35, 0.6, 1.4, 0.5, 1.5]
+    
     def __init__(self, confidence_threshold: float = 0.8):
         self.confidence_threshold = confidence_threshold
-        self.detected_scale: Optional[float] = None
+        self.game_window = GameWindow()
+        self.use_window_capture = False
+        self._last_window_size: Optional[Tuple[int, int]] = None
+        self._size_changed = False
 
     def capture_screen(self) -> np.ndarray:
+        if self.use_window_capture and self.game_window.hwnd:
+            img = self.game_window.capture()
+            if img is not None:
+                current_size = self.game_window.get_size()
+                if current_size:
+                    if self._last_window_size is not None and current_size != self._last_window_size:
+                        self._size_changed = True
+                    self._last_window_size = current_size
+                return img
+            
+            if self.game_window.capture_failures > 3:
+                if not self.game_window.is_valid():
+                    self.use_window_capture = False
+        
         with mss.mss() as sct:
             monitor_info = sct.monitors[0]
             screenshot = sct.grab(monitor_info)
             img = np.array(screenshot)
             return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
 
+    def check_window_resized(self) -> Optional[Tuple[int, int]]:
+        if self._size_changed:
+            self._size_changed = False
+            return self._last_window_size
+        return None
+
     def _get_monitor_offset(self) -> Tuple[int, int]:
+        if self.use_window_capture and self.game_window.hwnd:
+            return self.game_window.get_offset()
+        
         with mss.mss() as sct:
             mon = sct.monitors[0]
             return (mon["left"], mon["top"])
+    
+    def list_windows(self, min_size: Tuple[int, int] = (200, 200)) -> List[WindowInfo]:
+        return GameWindow.enumerate_windows(min_size)
+    
+    def select_window(self, hwnd: int) -> bool:
+        if self.game_window.set_window(hwnd):
+            self.use_window_capture = True
+            self._last_window_size = None
+            self._size_changed = False
+            return True
+        return False
+    
+    def select_window_by_title(self, title: str, partial: bool = True) -> bool:
+        if self.game_window.set_window_by_title(title, partial):
+            self.use_window_capture = True
+            self._last_window_size = None
+            self._size_changed = False
+            return True
+        return False
+    
+    def clear_window_selection(self):
+        self.game_window.hwnd = None
+        self.use_window_capture = False
+        self._last_window_size = None
+    
+    def get_selected_window_info(self) -> Optional[WindowInfo]:
+        if self.use_window_capture:
+            return self.game_window.get_info()
+        return None
 
     def base64_to_image(self, base64_string: str) -> np.ndarray:
         img_bytes = base64.b64decode(base64_string)
@@ -51,57 +109,6 @@ class ScreenImageDetector:
 
         return sequences
 
-    def calibrate_scale(self, template: np.ndarray, screenshot: Optional[np.ndarray] = None) -> Tuple[float, float]:
-        if screenshot is None:
-            screenshot = self.capture_screen()
-
-        screenshot_gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
-        template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-
-        scales = [1.0, 0.95, 1.05, 0.9, 1.1, 0.85, 1.15, 0.8, 1.2, 0.75, 1.25, 0.7, 1.3]
-        best_scale = 1.0
-        best_conf = 0.0
-
-        for scale in scales:
-            tw = int(template_gray.shape[1] * scale)
-            th = int(template_gray.shape[0] * scale)
-
-            if tw < 10 or th < 10:
-                continue
-            if th > screenshot_gray.shape[0] or tw > screenshot_gray.shape[1]:
-                continue
-
-            scaled = cv2.resize(template_gray, (tw, th), interpolation=cv2.INTER_AREA)
-            result = cv2.matchTemplate(screenshot_gray, scaled, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(result)
-
-            if max_val > best_conf:
-                best_conf = max_val
-                best_scale = scale
-
-        self.detected_scale = best_scale
-        return best_scale, best_conf
-
-    def calibrate_with_sequences(self, sequences: list[ActionSequence], screenshot: Optional[np.ndarray] = None) -> Tuple[float, float]:
-        if screenshot is None:
-            screenshot = self.capture_screen()
-
-        best_scale = 1.0
-        best_conf = 0.0
-
-        for sequence in sequences:
-            for template in sequence.templates:
-                scale, conf = self.calibrate_scale(template, screenshot)
-                if conf > best_conf:
-                    best_conf = conf
-                    best_scale = scale
-
-        self.detected_scale = best_scale
-        return best_scale, best_conf
-
-    def reset_scale(self):
-        self.detected_scale = None
-
     def find_image(self, template: np.ndarray, screenshot: Optional[np.ndarray] = None, use_grayscale: bool = True) -> MatchResult:
         if screenshot is None:
             screenshot = self.capture_screen()
@@ -113,21 +120,28 @@ class ScreenImageDetector:
             screenshot_proc = screenshot
             template_proc = template
 
-        scale = self.detected_scale or 1.0
+        best_match = MatchResult(found=False, confidence=0.0)
 
-        if scale != 1.0:
+        for scale in self.MATCH_SCALES:
             tw = int(template_proc.shape[1] * scale)
             th = int(template_proc.shape[0] * scale)
-            template_proc = cv2.resize(template_proc, (tw, th), interpolation=cv2.INTER_AREA)
 
-        if template_proc.shape[0] > screenshot_proc.shape[0] or template_proc.shape[1] > screenshot_proc.shape[1]:
-            return MatchResult(found=False, confidence=0.0)
+            if tw < 10 or th < 10:
+                continue
+            if th > screenshot_proc.shape[0] or tw > screenshot_proc.shape[1]:
+                continue
 
-        result = cv2.matchTemplate(screenshot_proc, template_proc, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        h, w = template_proc.shape[:2]
+            scaled_template = cv2.resize(template_proc, (tw, th), interpolation=cv2.INTER_AREA)
+            result = cv2.matchTemplate(screenshot_proc, scaled_template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
-        return MatchResult(found=max_val >= self.confidence_threshold, x=max_loc[0], y=max_loc[1], width=w, height=h, confidence=max_val)
+            if max_val > best_match.confidence:
+                best_match = MatchResult(found=max_val >= self.confidence_threshold, x=max_loc[0], y=max_loc[1], width=tw, height=th, confidence=max_val)
+                
+                if max_val >= self.confidence_threshold:
+                    break
+
+        return best_match
 
     def click_at(self, x: int, y: int, clicks: int = 1, button: str = "left"):
         import pyautogui

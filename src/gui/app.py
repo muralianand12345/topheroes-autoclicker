@@ -6,7 +6,75 @@ from typing import Optional
 from pynput import keyboard
 
 from embedded_assets import ASSETS
-from core import Config, ScreenImageDetector, ActionSequence
+from core import Config, ScreenImageDetector, ActionSequence, WindowInfo
+
+
+class WindowSelectorDialog:
+    def __init__(self, parent: tk.Tk, windows: list[WindowInfo]):
+        self.result: Optional[WindowInfo] = None
+        
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Select Game Window")
+        self.dialog.geometry("500x400")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        # Center on parent
+        self.dialog.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - 500) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 400) // 2
+        self.dialog.geometry(f"+{x}+{y}")
+        
+        # Instructions
+        ttk.Label(self.dialog, text="Select the game window to monitor:", padding=(10, 10)).pack(anchor=tk.W)
+        
+        # Listbox with scrollbar
+        list_frame = ttk.Frame(self.dialog)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.listbox = tk.Listbox(list_frame,  yscrollcommand=scrollbar.set, font=("Consolas", 10), selectmode=tk.SINGLE)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.listbox.yview)
+        
+        # Populate list
+        self.windows = windows
+        for win in windows:
+            title = win.title[:50] + "..." if len(win.title) > 50 else win.title
+            self.listbox.insert(tk.END, f"{title} ({win.width}x{win.height})")
+        
+        # Double-click to select
+        self.listbox.bind("<Double-Button-1>", lambda e: self._on_select())
+        
+        # Buttons
+        btn_frame = ttk.Frame(self.dialog, padding=10)
+        btn_frame.pack(fill=tk.X)
+        
+        ttk.Button(btn_frame, text="Refresh", command=self._refresh).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Cancel", command=self.dialog.destroy).pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text="Select", command=self._on_select).pack(side=tk.RIGHT, padx=5)
+        
+        self.dialog.protocol("WM_DELETE_WINDOW", self.dialog.destroy)
+    
+    def _refresh(self):
+        from core import GameWindow
+        self.windows = GameWindow.enumerate_windows()
+        self.listbox.delete(0, tk.END)
+        for win in self.windows:
+            title = win.title[:50] + "..." if len(win.title) > 50 else win.title
+            self.listbox.insert(tk.END, f"{title} ({win.width}x{win.height})")
+    
+    def _on_select(self):
+        selection = self.listbox.curselection()
+        if selection:
+            self.result = self.windows[selection[0]]
+            self.dialog.destroy()
+    
+    def show(self) -> Optional[WindowInfo]:
+        self.dialog.wait_window()
+        return self.result
 
 
 class AutoClickerApp:
@@ -15,8 +83,7 @@ class AutoClickerApp:
         self.root.title("Top Heroes Auto-Clicker")
 
         screen_height = self.root.winfo_screenheight()
-        screen_width = self.root.winfo_screenwidth()
-        window_height = min(650, screen_height - 100)
+        window_height = min(600, screen_height - 100)
         window_width = 500
 
         self.root.geometry(f"{window_width}x{window_height}")
@@ -40,7 +107,6 @@ class AutoClickerApp:
         self._load_saved_config()
         self._setup_hotkeys()
 
-        # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _setup_ui(self):
@@ -64,6 +130,27 @@ class AutoClickerApp:
         main_frame = ttk.Frame(self.scrollable_frame, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
+        # === Window Selection Frame ===
+        window_frame = ttk.LabelFrame(main_frame, text="Target Window", padding="10")
+        window_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        window_info_frame = ttk.Frame(window_frame)
+        window_info_frame.pack(fill=tk.X)
+        
+        self.window_status_label = ttk.Label(window_info_frame, text="No window selected (using full screen)", foreground="gray")
+        self.window_status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        window_btn_frame = ttk.Frame(window_frame)
+        window_btn_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        self.select_window_btn = ttk.Button(window_btn_frame, text="🎯 Select Window", command=self._show_window_selector)
+        self.select_window_btn.pack(side=tk.LEFT)
+        
+        self.clear_window_btn = ttk.Button(window_btn_frame, text="Clear", command=self._clear_window_selection, state=tk.DISABLED)
+        self.clear_window_btn.pack(side=tk.LEFT, padx=(5, 0))
+        
+        ttk.Label(window_frame, text="Selecting a window is faster and auto-handles resize", foreground="gray", font=("", 8)).pack(anchor=tk.W, pady=(5, 0))
+
         # === Action Sequences Frame ===
         seq_frame = ttk.LabelFrame(main_frame, text="Action Sequences", padding="10")
         seq_frame.pack(fill=tk.X, pady=(0, 10))
@@ -73,25 +160,6 @@ class AutoClickerApp:
 
         self.no_sequences_label = ttk.Label(self.sequences_container, text="No sequences loaded. Check embedded_assets.py", foreground="gray")
         self.no_sequences_label.pack(anchor=tk.W)
-
-        # === Calibration Frame ===
-        calib_frame = ttk.LabelFrame(main_frame, text="Calibration", padding="10")
-        calib_frame.pack(fill=tk.X, pady=(0, 10))
-
-        calib_info = ttk.Label(calib_frame, text="If clicks are offset, open the game and click Calibrate.", foreground="gray")
-        calib_info.pack(anchor=tk.W)
-
-        calib_btn_frame = ttk.Frame(calib_frame)
-        calib_btn_frame.pack(fill=tk.X, pady=(5, 0))
-
-        self.calibrate_btn = ttk.Button(calib_btn_frame, text="🔧 Calibrate", command=self._calibrate)
-        self.calibrate_btn.pack(side=tk.LEFT)
-
-        self.reset_scale_btn = ttk.Button(calib_btn_frame, text="Reset", command=self._reset_scale)
-        self.reset_scale_btn.pack(side=tk.LEFT, padx=(5, 0))
-
-        self.scale_label = ttk.Label(calib_btn_frame, text="Scale: 1.0x", foreground="gray")
-        self.scale_label.pack(side=tk.LEFT, padx=(10, 0))
 
         # === Settings Frame ===
         settings_frame = ttk.LabelFrame(main_frame, text="Settings", padding="10")
@@ -179,6 +247,43 @@ class AutoClickerApp:
         self.status_indicator.delete("all")
         self.status_indicator.create_oval(2, 2, 10, 10, fill=color, outline=color)
 
+    def _show_window_selector(self):
+        if not self.detector:
+            self.log("Detector not initialized")
+            return
+        
+        windows = self.detector.list_windows()
+        if not windows:
+            self.log("No windows found")
+            return
+        
+        dialog = WindowSelectorDialog(self.root, windows)
+        selected = dialog.show()
+        
+        if selected:
+            if self.detector.select_window(selected.hwnd):
+                self._update_window_status(selected)
+                self.log(f"Selected: {selected.title} ({selected.width}x{selected.height})")
+                self.config.set_window(selected.title)
+            else:
+                self.log("Failed to select window")
+    
+    def _update_window_status(self, window_info: Optional[WindowInfo]):
+        if window_info:
+            title = window_info.title[:40] + "..." if len(window_info.title) > 40 else window_info.title
+            self.window_status_label.configure(text=f"✓ {title} ({window_info.width}x{window_info.height})", foreground="green")
+            self.clear_window_btn.configure(state=tk.NORMAL)
+        else:
+            self.window_status_label.configure(text="No window selected (using full screen)", foreground="gray")
+            self.clear_window_btn.configure(state=tk.DISABLED)
+    
+    def _clear_window_selection(self):
+        if self.detector:
+            self.detector.clear_window_selection()
+        self._update_window_status(None)
+        self.config.clear_window()
+        self.log("Cleared window selection, using full screen")
+
     def _load_sequences(self):
         if not ASSETS:
             self.log("No embedded assets found.")
@@ -214,12 +319,6 @@ class AutoClickerApp:
         self.log(f"Loaded {len(self.sequences)} sequence(s)")
 
     def _load_saved_config(self):
-        saved_scale = self.config.get_scale()
-        if saved_scale and self.detector:
-            self.detector.detected_scale = saved_scale
-            self.scale_label.configure(text=f"Scale: {saved_scale:.2f}x")
-            self.log(f"Loaded saved scale: {saved_scale:.2f}x")
-
         settings = self.config.get_settings()
         if settings:
             if "check_interval" in settings:
@@ -230,6 +329,14 @@ class AutoClickerApp:
                 self.step_delay_var.set(settings["step_delay"])
             if "confidence" in settings:
                 self.confidence_var.set(settings["confidence"])
+        
+        saved_window = self.config.get_window()
+        if saved_window and self.detector:
+            if self.detector.select_window_by_title(saved_window, partial=True):
+                info = self.detector.get_selected_window_info()
+                if info:
+                    self._update_window_status(info)
+                    self.log(f"Restored window: {info.title}")
 
     def _save_settings(self):
         settings = {
@@ -239,51 +346,6 @@ class AutoClickerApp:
             "confidence": self.confidence_var.get(),
         }
         self.config.set_settings(settings)
-
-    def _calibrate(self):
-        if not self.detector or not self.sequences:
-            self.log("No sequences loaded. Cannot calibrate.")
-            return
-
-        if self.is_running:
-            self.log("Stop the auto-clicker before calibrating.")
-            return
-
-        self.log("Calibrating... (make sure game is visible)")
-        self.calibrate_btn.configure(state=tk.DISABLED)
-
-        def do_calibrate():
-            try:
-                scale, confidence = self.detector.calibrate_with_sequences(self.sequences)
-                self.root.after(0, lambda: self._on_calibrate_complete(scale, confidence))
-            except Exception as e:
-                self.root.after(0, lambda: self._on_calibrate_error(str(e)))
-
-        threading.Thread(target=do_calibrate, daemon=True).start()
-
-    def _on_calibrate_complete(self, scale: float, confidence: float):
-        self.calibrate_btn.configure(state=tk.NORMAL)
-        self.scale_label.configure(text=f"Scale: {scale:.2f}x")
-
-        self.config.set_scale(scale)
-
-        if confidence >= self.detector.confidence_threshold:
-            self.log(f"Calibration successful! Scale: {scale:.2f}x (confidence: {confidence:.2f})")
-            self.log("Scale saved - no need to recalibrate next time.")
-        else:
-            self.log(f"Calibration done. Scale: {scale:.2f}x (low confidence: {confidence:.2f})")
-            self.log("Tip: Make sure the game UI is visible on screen.")
-
-    def _on_calibrate_error(self, error: str):
-        self.calibrate_btn.configure(state=tk.NORMAL)
-        self.log(f"Calibration failed: {error}")
-
-    def _reset_scale(self):
-        if self.detector:
-            self.detector.reset_scale()
-            self.config.clear_scale()
-            self.scale_label.configure(text="Scale: 1.0x")
-            self.log("Scale reset to 1.0x")
 
     def _setup_hotkeys(self):
         def on_press(key):
@@ -341,14 +403,19 @@ class AutoClickerApp:
 
         self.start_btn.configure(state=tk.DISABLED)
         self.stop_btn.configure(state=tk.NORMAL)
-        self.calibrate_btn.configure(state=tk.DISABLED)
+        self.select_window_btn.configure(state=tk.DISABLED)
         self._draw_status_indicator("#22c55e")
         self.status_label.configure(text="Running")
 
         self.log("Started monitoring...")
         self.log(f"Enabled: {', '.join(enabled)}")
-        if self.detector.detected_scale and self.detector.detected_scale != 1.0:
-            self.log(f"Using scale: {self.detector.detected_scale:.2f}x")
+        
+        if self.detector.use_window_capture:
+            info = self.detector.get_selected_window_info()
+            if info:
+                self.log(f"Target: {info.title} ({info.width}x{info.height})")
+        else:
+            self.log("Target: Full screen")
 
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
@@ -363,7 +430,7 @@ class AutoClickerApp:
 
         self.start_btn.configure(state=tk.NORMAL)
         self.stop_btn.configure(state=tk.DISABLED)
-        self.calibrate_btn.configure(state=tk.NORMAL)
+        self.select_window_btn.configure(state=tk.NORMAL)
         self._draw_status_indicator("gray")
         self.status_label.configure(text="Idle")
 
@@ -393,6 +460,10 @@ class AutoClickerApp:
                     continue
 
                 screenshot = self.detector.capture_screen()
+                new_size = self.detector.check_window_resized()
+                if new_size:
+                    self._log_from_thread(f"Window resized to {new_size[0]}x{new_size[1]}")
+                
                 sequence = self.detector.find_first_sequence(self.sequences, enabled, screenshot)
 
                 if sequence:

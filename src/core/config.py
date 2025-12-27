@@ -13,15 +13,11 @@ class Config:
         self._ensure_config_dir()
 
     def _get_config_path(self) -> Path:
-        """Get the config file path based on OS."""
         if platform.system() == "Windows":
-            # C:\Users\<name>\AppData\Local\TopHeroesAutoClicker\config.json
             base = Path.home() / "AppData" / "Local"
         elif platform.system() == "Darwin":
-            # macOS: ~/Library/Application Support/TopHeroesAutoClicker/config.json
             base = Path.home() / "Library" / "Application Support"
         else:
-            # Linux: ~/.local/share/TopHeroesAutoClicker/config.json
             base = Path.home() / ".local" / "share"
 
         return base / self.APP_NAME / self.CONFIG_FILENAME
@@ -46,20 +42,6 @@ class Config:
         except IOError as e:
             print(f"Failed to save config: {e}")
 
-    def get_scale(self) -> Optional[float]:
-        data = self._load()
-        return data.get("scale")
-
-    def set_scale(self, scale: float):
-        data = self._load()
-        data["scale"] = scale
-        self._save(data)
-
-    def clear_scale(self):
-        data = self._load()
-        data.pop("scale", None)
-        self._save(data)
-
     def get_settings(self) -> dict:
         data = self._load()
         return data.get("settings", {})
@@ -67,4 +49,18 @@ class Config:
     def set_settings(self, settings: dict):
         data = self._load()
         data["settings"] = settings
+        self._save(data)
+    
+    def get_window(self) -> Optional[str]:
+        data = self._load()
+        return data.get("window_title")
+    
+    def set_window(self, title: str):
+        data = self._load()
+        data["window_title"] = title
+        self._save(data)
+    
+    def clear_window(self):
+        data = self._load()
+        data.pop("window_title", None)
         self._save(data)
