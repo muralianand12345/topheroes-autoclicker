@@ -1,12 +1,13 @@
 import time
 import threading
+import webbrowser
 import tkinter as tk
 from tkinter import ttk
-from typing import Optional
 from pynput import keyboard
+from typing import Optional, Tuple
 
 from embedded_assets import ASSETS
-from core import Config, ScreenImageDetector, ActionSequence, WindowInfo
+from core import Config, ScreenImageDetector, ActionSequence, WindowInfo, check_for_update_async, CURRENT_VERSION
 
 
 class WindowSelectorDialog:
@@ -80,10 +81,10 @@ class WindowSelectorDialog:
 class AutoClickerApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Top Heroes Auto-Clicker")
+        self.root.title(f"Top Heroes Auto-Clicker v{CURRENT_VERSION}")
 
         screen_height = self.root.winfo_screenheight()
-        window_height = min(600, screen_height - 100)
+        window_height = min(650, screen_height - 100)
         window_width = 500
 
         self.root.geometry(f"{window_width}x{window_height}")
@@ -100,18 +101,29 @@ class AutoClickerApp:
         self.detector: Optional[ScreenImageDetector] = None
         self.sequences: list[ActionSequence] = []
         self.sequence_vars: dict[str, tk.BooleanVar] = {}
+        
+        # Update banner reference
+        self.update_banner: Optional[tk.Frame] = None
 
         # Setup
         self._setup_ui()
         self._load_sequences()
         self._load_saved_config()
         self._setup_hotkeys()
+        self._check_for_updates()
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _setup_ui(self):
-        self.canvas = tk.Canvas(self.root)
-        self.scrollbar = ttk.Scrollbar(self.root, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.main_container = ttk.Frame(self.root)
+        self.main_container.pack(fill=tk.BOTH, expand=True)
+        
+        self.update_banner_container = ttk.Frame(self.main_container)
+        self.update_banner_container.pack(fill=tk.X)
+        
+        # Scrollable area
+        self.canvas = tk.Canvas(self.main_container)
+        self.scrollbar = ttk.Scrollbar(self.main_container, orient=tk.VERTICAL, command=self.canvas.yview)
         self.scrollable_frame = ttk.Frame(self.canvas)
 
         self.scrollable_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
@@ -246,6 +258,45 @@ class AutoClickerApp:
     def _draw_status_indicator(self, color: str):
         self.status_indicator.delete("all")
         self.status_indicator.create_oval(2, 2, 10, 10, fill=color, outline=color)
+
+    def _check_for_updates(self):
+        def on_update_result(result: Optional[Tuple[str, str]]):
+            if result:
+                version, url = result
+                self.root.after(0, lambda: self._show_update_banner(version, url))
+        
+        check_for_update_async(on_update_result)
+
+    def _show_update_banner(self, version: str, url: str):
+        if self.update_banner:
+            return
+        
+        self.update_banner = tk.Frame(self.update_banner_container, bg="#1e40af", cursor="hand2")
+        self.update_banner.pack(fill=tk.X)
+        
+        content_frame = tk.Frame(self.update_banner, bg="#1e40af")
+        content_frame.pack(fill=tk.X, padx=10, pady=8)
+        
+        msg_label = tk.Label(content_frame, text=f"🎉 Update available: {version}", bg="#1e40af", fg="white", font=("", 10, "bold"))
+        msg_label.pack(side=tk.LEFT)
+        
+        link_label = tk.Label(content_frame, text="Download →", bg="#1e40af", fg="#93c5fd", font=("", 10, "underline"), cursor="hand2")
+        link_label.pack(side=tk.LEFT, padx=(10, 0))
+        link_label.bind("<Button-1>", lambda e: webbrowser.open(url))
+        
+        dismiss_btn = tk.Label(content_frame, text="✕", bg="#1e40af", fg="white", font=("", 12), cursor="hand2")
+        dismiss_btn.pack(side=tk.RIGHT)
+        dismiss_btn.bind("<Button-1>", lambda e: self._dismiss_update_banner())
+        
+        for widget in [self.update_banner, content_frame, msg_label]:
+            widget.bind("<Button-1>", lambda e: webbrowser.open(url))
+        
+        self.log(f"New version available: {version}")
+
+    def _dismiss_update_banner(self):
+        if self.update_banner:
+            self.update_banner.destroy()
+            self.update_banner = None
 
     def _show_window_selector(self):
         if not self.detector:
