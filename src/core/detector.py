@@ -10,14 +10,59 @@ from .models import ActionSequence, MatchResult
 
 
 class ScreenImageDetector:
-    MATCH_SCALES = [1.0, 0.8, 0.95, 1.05, 0.9, 1.1, 0.85, 1.15, 1.2, 0.75, 1.25, 0.7, 1.3, 0.65, 1.35, 0.6, 1.4, 0.5, 1.5]
-    
+    REFERENCE_SIZE = (1280, 720)
+    COARSE_OFFSETS = [-0.4, -0.2, 0.0, 0.2, 0.4]
+    FINE_OFFSETS = [-0.1, -0.05, 0.0, 0.05, 0.1]
+    CACHED_OFFSETS = [-0.08, -0.04, 0.0, 0.04, 0.08]
+
     def __init__(self, confidence_threshold: float = 0.8):
         self.confidence_threshold = confidence_threshold
         self.game_window = GameWindow()
         self.use_window_capture = False
         self._last_window_size: Optional[Tuple[int, int]] = None
         self._size_changed = False
+        self._scale_cache: dict[int, float] = {}
+        self._expected_scale: float = 1.0
+
+    def _compute_expected_scale(self) -> float:
+        if not self.use_window_capture or not self._last_window_size:
+            return 1.0
+        current_w, current_h = self._last_window_size
+        ref_w, ref_h = self.REFERENCE_SIZE
+        scale_w = current_w / ref_w
+        scale_h = current_h / ref_h
+        return (scale_w + scale_h) / 2.0
+
+    def _get_template_id(self, template: np.ndarray) -> int:
+        return hash(template.tobytes()[:1024])
+
+    def _build_scales(self, template: np.ndarray) -> List[float]:
+        template_id = self._get_template_id(template)
+        expected = self._compute_expected_scale()
+        self._expected_scale = expected
+
+        if template_id in self._scale_cache:
+            cached = self._scale_cache[template_id]
+            scales = [cached + off for off in self.CACHED_OFFSETS]
+        else:
+            coarse = [expected + off for off in self.COARSE_OFFSETS]
+            fine = [expected + off for off in self.FINE_OFFSETS]
+            seen = set()
+            scales = []
+            for s in coarse + fine:
+                rounded = round(s, 2)
+                if rounded not in seen and 0.3 <= rounded <= 2.0:
+                    seen.add(rounded)
+                    scales.append(rounded)
+            scales.sort(key=lambda x: abs(x - expected))
+        return scales
+
+    def _update_scale_cache(self, template: np.ndarray, scale: float):
+        template_id = self._get_template_id(template)
+        self._scale_cache[template_id] = scale
+
+    def clear_scale_cache(self):
+        self._scale_cache.clear()
 
     def capture_screen(self) -> np.ndarray:
         if self.use_window_capture and self.game_window.hwnd:
@@ -27,13 +72,14 @@ class ScreenImageDetector:
                 if current_size:
                     if self._last_window_size is not None and current_size != self._last_window_size:
                         self._size_changed = True
+                        self.clear_scale_cache()
                     self._last_window_size = current_size
                 return img
-            
+
             if self.game_window.capture_failures > 3:
                 if not self.game_window.is_valid():
                     self.use_window_capture = False
-        
+
         with mss.mss() as sct:
             monitor_info = sct.monitors[0]
             screenshot = sct.grab(monitor_info)
@@ -49,35 +95,38 @@ class ScreenImageDetector:
     def _get_monitor_offset(self) -> Tuple[int, int]:
         if self.use_window_capture and self.game_window.hwnd:
             return self.game_window.get_offset()
-        
+
         with mss.mss() as sct:
             mon = sct.monitors[0]
             return (mon["left"], mon["top"])
-    
+
     def list_windows(self, min_size: Tuple[int, int] = (200, 200)) -> List[WindowInfo]:
         return GameWindow.enumerate_windows(min_size)
-    
+
     def select_window(self, hwnd: int) -> bool:
         if self.game_window.set_window(hwnd):
             self.use_window_capture = True
-            self._last_window_size = None
+            self._last_window_size = self.game_window.get_size()
             self._size_changed = False
+            self.clear_scale_cache()
             return True
         return False
-    
+
     def select_window_by_title(self, title: str, partial: bool = True) -> bool:
         if self.game_window.set_window_by_title(title, partial):
             self.use_window_capture = True
-            self._last_window_size = None
+            self._last_window_size = self.game_window.get_size()
             self._size_changed = False
+            self.clear_scale_cache()
             return True
         return False
-    
+
     def clear_window_selection(self):
         self.game_window.hwnd = None
         self.use_window_capture = False
         self._last_window_size = None
-    
+        self.clear_scale_cache()
+
     def get_selected_window_info(self) -> Optional[WindowInfo]:
         if self.use_window_capture:
             return self.game_window.get_info()
@@ -120,9 +169,10 @@ class ScreenImageDetector:
             screenshot_proc = screenshot
             template_proc = template
 
+        scales = self._build_scales(template)
         best_match = MatchResult(found=False, confidence=0.0)
 
-        for scale in self.MATCH_SCALES:
+        for scale in scales:
             tw = int(template_proc.shape[1] * scale)
             th = int(template_proc.shape[0] * scale)
 
@@ -137,8 +187,9 @@ class ScreenImageDetector:
 
             if max_val > best_match.confidence:
                 best_match = MatchResult(found=max_val >= self.confidence_threshold, x=max_loc[0], y=max_loc[1], width=tw, height=th, confidence=max_val)
-                
+
                 if max_val >= self.confidence_threshold:
+                    self._update_scale_cache(template, scale)
                     break
 
         return best_match

@@ -7,7 +7,7 @@ from urllib.request import urlopen, Request
 
 GITHUB_OWNER = "muralianand12345"
 GITHUB_REPO = "topheroes-autoclicker"
-CURRENT_VERSION = "1.2.1"
+CURRENT_VERSION = "1.2.2"
 
 RELEASES_API_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"

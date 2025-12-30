@@ -1,12 +1,13 @@
 import json
 import platform
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 
 class Config:
     APP_NAME = "TopHeroesAutoClicker"
     CONFIG_FILENAME = "config.json"
+    DEFAULT_REFERENCE_SIZE = (1280, 720)
 
     def __init__(self):
         self.config_path = self._get_config_path()
@@ -50,17 +51,29 @@ class Config:
         data = self._load()
         data["settings"] = settings
         self._save(data)
-    
+
     def get_window(self) -> Optional[str]:
         data = self._load()
         return data.get("window_title")
-    
+
     def set_window(self, title: str):
         data = self._load()
         data["window_title"] = title
         self._save(data)
-    
+
     def clear_window(self):
         data = self._load()
         data.pop("window_title", None)
+        self._save(data)
+
+    def get_reference_size(self) -> Tuple[int, int]:
+        data = self._load()
+        size = data.get("reference_size")
+        if size and isinstance(size, list) and len(size) == 2:
+            return tuple(size)
+        return self.DEFAULT_REFERENCE_SIZE
+
+    def set_reference_size(self, width: int, height: int):
+        data = self._load()
+        data["reference_size"] = [width, height]
         self._save(data)

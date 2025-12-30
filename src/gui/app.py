@@ -161,7 +161,7 @@ class AutoClickerApp:
         self.clear_window_btn = ttk.Button(window_btn_frame, text="Clear", command=self._clear_window_selection, state=tk.DISABLED)
         self.clear_window_btn.pack(side=tk.LEFT, padx=(5, 0))
         
-        ttk.Label(window_frame, text="Selecting a window is faster and auto-handles resize", foreground="gray", font=("", 8)).pack(anchor=tk.W, pady=(5, 0))
+        ttk.Label(window_frame, text="For better performance, make sure your window is atleast 1280x720", foreground="gray", font=("", 8)).pack(anchor=tk.W, pady=(5, 0))
 
         # === Action Sequences Frame ===
         seq_frame = ttk.LabelFrame(main_frame, text="Action Sequences", padding="10")
@@ -182,7 +182,7 @@ class AutoClickerApp:
 
         # Check Interval
         ttk.Label(settings_grid, text="Check Interval:").grid(row=0, column=0, sticky=tk.W, pady=2)
-        self.check_interval_var = tk.StringVar(value="1.0")
+        self.check_interval_var = tk.StringVar(value="0.1")
         ttk.Entry(settings_grid, textvariable=self.check_interval_var, width=8).grid(row=0, column=1, padx=5, pady=2)
         ttk.Label(settings_grid, text="sec").grid(row=0, column=2, sticky=tk.W, pady=2)
 
